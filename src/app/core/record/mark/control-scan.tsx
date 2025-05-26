@@ -1,121 +1,147 @@
-import { TooltipButton } from "@/components/tooltip-button"
-import { insertMark } from "@/db/marks"
-import { useTranslations } from 'next-intl'
-import { fetchAiDesc } from "@/lib/ai"
-import ocr from "@/lib/ocr"
-import useMarkStore from "@/stores/mark"
-import useTagStore from "@/stores/tag"
-import { invoke } from "@tauri-apps/api/core"
-import { getCurrentWebviewWindow, WebviewWindow } from "@tauri-apps/api/webviewWindow"
-import { currentMonitor } from '@tauri-apps/api/window';
-import { ScanText } from "lucide-react"
-import { isRegistered, register, unregister } from '@tauri-apps/plugin-global-shortcut';
-import { useEffect } from "react"
-import { v4 as uuid } from 'uuid'
-import useSettingStore from "@/stores/setting"
-import emitter from "@/lib/emitter"
-import { EmitterShortcutEvents } from "@/config/emitters"
-import { ShortcutDefault, ShortcutSettings } from "@/config/shortcut"
-import { Store } from "@tauri-apps/plugin-store"
- 
+import { TooltipButton } from "@/components/tooltip-button";
+import { insertMark } from "@/db/marks";
+import { useTranslations } from "next-intl";
+import { fetchAiDesc } from "@/lib/ai";
+import ocr from "@/lib/ocr";
+import useMarkStore from "@/stores/mark";
+import useTagStore from "@/stores/tag";
+import { invoke } from "@tauri-apps/api/core";
+import {
+  getCurrentWebviewWindow,
+  WebviewWindow,
+} from "@tauri-apps/api/webviewWindow";
+import { currentMonitor } from "@tauri-apps/api/window";
+import { ScanText } from "lucide-react";
+import {
+  isRegistered,
+  register,
+  unregister,
+} from "@tauri-apps/plugin-global-shortcut";
+import { useEffect } from "react";
+import { v4 as uuid } from "uuid";
+import useSettingStore from "@/stores/setting";
+import emitter from "@/lib/emitter";
+import { EmitterShortcutEvents } from "@/config/emitters";
+import { ShortcutDefault, ShortcutSettings } from "@/config/shortcut";
+import { Store } from "@tauri-apps/plugin-store";
+
 export function ControlScan() {
   const t = useTranslations();
-  const { currentTagId, fetchTags, getCurrentTag } = useTagStore()
-  const { fetchMarks, addQueue, setQueue, removeQueue } = useMarkStore()
-  const { apiKey } = useSettingStore()
+  const { currentTagId, fetchTags, getCurrentTag } = useTagStore();
+  const { fetchMarks, addQueue, setQueue, removeQueue } = useMarkStore();
+  const { apiKey } = useSettingStore();
 
   async function createScreenShot() {
-    const currentWindow = getCurrentWebviewWindow()
-    await currentWindow.hide()
+    const currentWindow = getCurrentWebviewWindow();
+    await currentWindow.hide();
 
-    await invoke('screenshot')
-    
+    await invoke("screenshot");
+
     const monitor = await currentMonitor();
 
     if (!monitor) return;
-    
-    const webview = new WebviewWindow('screenshot', {
-      url: '/screenshot',
+
+    const webview = new WebviewWindow("screenshot", {
+      url: "/screenshot",
       decorations: false,
     });
 
-    webview.setPosition(monitor?.position)
-    webview.setSize(monitor?.size)
+    webview.setPosition(monitor?.position);
+    webview.setSize(monitor?.size);
 
     webview.onCloseRequested(async () => {
-      if (!await currentWindow.isVisible()) {
-        await currentWindow.show()
+      if (!(await currentWindow.isVisible())) {
+        await currentWindow.show();
       } else {
-        await currentWindow.setFocus()
+        await currentWindow.setFocus();
       }
-      unlisten()
-    })
+      unlisten();
+    });
 
-    const unlisten = await webview.listen("save-success", async e => {
-      if (typeof e.payload === 'string') {
-        const queueId = uuid()
-        addQueue({ queueId, progress: t('record.mark.progress.ocr'), type: 'scan', startTime: Date.now() })
-        const content = await ocr(`screenshot/${e.payload}`)
-        let desc = ''
+    const unlisten = await webview.listen("save-success", async (e) => {
+      if (typeof e.payload === "string") {
+        const queueId = uuid();
+        addQueue({
+          queueId,
+          progress: t("record.mark.progress.ocr"),
+          type: "scan",
+          startTime: Date.now(),
+        });
+        const content = await ocr(`screenshot/${e.payload}`);
+        let desc = "";
         if (apiKey) {
-          setQueue(queueId, { progress: t('record.mark.progress.aiAnalysis') });
-          desc = await fetchAiDesc(content).then(res => res ? res : content) || content
+          setQueue(queueId, { progress: t("record.mark.progress.aiAnalysis") });
+          desc =
+            (await fetchAiDesc(content).then((res) => (res ? res : content))) ||
+            content;
         } else {
-          desc = content
+          desc = content;
         }
-        setQueue(queueId, { progress: t('record.mark.progress.save') });
-        await insertMark({ tagId: currentTagId, type: 'scan', content, url: e.payload, desc })
-        removeQueue(queueId)
-        await fetchMarks()
-        await fetchTags()
-        getCurrentTag()
+        setQueue(queueId, { progress: t("record.mark.progress.save") });
+        await insertMark({
+          tagId: currentTagId,
+          type: "scan",
+          content,
+          url: e.payload,
+          desc,
+        });
+        removeQueue(queueId);
+        await fetchMarks();
+        await fetchTags();
+        getCurrentTag();
       }
-      unlisten()
+      unlisten();
     });
   }
 
   async function initRegister() {
-    const store = await Store.load('store.json')
-    let lastKey = await store.get<string>(ShortcutSettings.screenshot)
+    const store = await Store.load("store.json");
+    let lastKey = await store.get<string>(ShortcutSettings.screenshot);
     if (!lastKey) {
-      await store.set(ShortcutSettings.screenshot, ShortcutDefault.screenshot)
-      lastKey = ShortcutDefault.screenshot
+      await store.set(ShortcutSettings.screenshot, ShortcutDefault.screenshot);
+      lastKey = ShortcutDefault.screenshot;
     }
     const isEscRegistered = await isRegistered(lastKey);
     if (isEscRegistered) {
       await unregister(lastKey);
     }
     await register(lastKey, async (e) => {
-      if (e.state === 'Pressed') {
-        await createScreenShot()
+      if (e.state === "Pressed") {
+        await createScreenShot();
       }
-    }).catch(() => {})
+    }).catch(() => {});
   }
 
   async function linstenRegister(key?: string) {
-    if (!key) return
-    const store = await Store.load('store.json')
-    const lastKey = await store.get<string>(ShortcutSettings.screenshot)
+    if (!key) return;
+    const store = await Store.load("store.json");
+    const lastKey = await store.get<string>(ShortcutSettings.screenshot);
     if (lastKey) {
       const isEscRegistered = await isRegistered(lastKey);
       if (isEscRegistered) {
         await unregister(lastKey);
       }
     }
-    await store.set(ShortcutSettings.screenshot, key)
+    await store.set(ShortcutSettings.screenshot, key);
     await register(key, async (e) => {
-      if (e.state === 'Pressed') {
-        await createScreenShot()
+      if (e.state === "Pressed") {
+        await createScreenShot();
       }
-    }).catch(() => {})
+    }).catch(() => {});
   }
 
   useEffect(() => {
-    initRegister()
-    emitter.on(EmitterShortcutEvents.screenshot, (res) => linstenRegister(res as string))
-  }, [])
+    initRegister();
+    emitter.on(EmitterShortcutEvents.screenshot, (res) =>
+      linstenRegister(res as string)
+    );
+  }, []);
 
   return (
-    <TooltipButton icon={<ScanText />} tooltipText={t('record.mark.type.screenshot')} onClick={createScreenShot} />
-  )
+    <TooltipButton
+      icon={<ScanText />}
+      tooltipText={t("record.mark.type.screenshot")}
+      onClick={createScreenShot}
+    />
+  );
 }
